@@ -234,7 +234,7 @@ void createButton(const string objName, const int xDistance, const int yDistance
    ObjectSetInteger(0, objName, OBJPROP_BORDER_COLOR, bdClr);
    ObjectSetInteger(0, objName, OBJPROP_STATE, false);
    ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, objName, OBJPROP_HIDDEN, false);  // FIX: Show button (was true)
    ObjectSetInteger(0, objName, OBJPROP_BACK, false);
    ChartRedraw();
   }
@@ -261,7 +261,7 @@ void createDashboard(void)
       ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_WIDTH, 1);
       ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_BACK, false);
       ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_SELECTABLE, false);
-      ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_HIDDEN, true);
+      ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_HIDDEN, false);  // FIX: Show dashboard (was true)
       //--- CREATE PLAYBACK, BUY, AND SELL BUTTONS
       createButton(_REPLAY_PLAY_BUTTON, 75, 45, 30, 30, CORNER_LEFT_LOWER,
                    clrWhite, clrDimGray, clrBlack, 20, "Playback Control", _PLAY_SYMBOL, "Segoe UI");
@@ -290,7 +290,7 @@ void createHLine(const string objName, const double price1, const color clr,
       ObjectSetInteger(0, objName, OBJPROP_COLOR, clr);
       ObjectSetInteger(0, objName, OBJPROP_WIDTH, 1);
       ObjectSetInteger(0, objName, OBJPROP_STYLE, style);
-      ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
+      ObjectSetInteger(0, objName, OBJPROP_HIDDEN, false);  // FIX: Show line (was true)
       ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, true);
       ObjectSetInteger(0, objName, OBJPROP_SELECTED, selected);
       ObjectSetString(0, objName, OBJPROP_TOOLTIP, toolTip);
@@ -313,7 +313,7 @@ void drawAnchorLine(const string objName, const datetime vTime,
      {
       ObjectSetInteger(0, objName, OBJPROP_COLOR, clrBlue);
       ObjectSetInteger(0, objName, OBJPROP_WIDTH, 1);
-      ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
+      ObjectSetInteger(0, objName, OBJPROP_HIDDEN, false);  // FIX: Show anchor line (was true)
       ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, true);
       ObjectSetString(0, objName, OBJPROP_TOOLTIP, tooltip);
       ChartRedraw();
