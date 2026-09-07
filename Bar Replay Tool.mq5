@@ -29,6 +29,10 @@
 #define _REPLAY_POSITION_TP _PROG_NAME + "REPLAY_POSITION_TP"
 #define _REPLAY_POSITION_SL _PROG_NAME + "REPLAY_POSITION_SL"
 
+//--- INPUT PARAMETERS
+input int InpSLDistancePoints = 10000; // STOP LOSS DISTANCE (IN POINTS)
+input int InpTPDistancePoints = 10000; // TAKE PROFIT DISTANCE (IN POINTS)
+
 //--- CUSTOM DATA STRUCTURE
 struct st_ChartInfo
   {
@@ -55,7 +59,7 @@ public:
    //--- FUNCTIONS
    void              customize();
    void              restore();
-   color             getPriceColor();
+   color             getPriceColor(const bool isBullish);
 
   } chartState;
 
@@ -73,6 +77,67 @@ int lastCalculated = 0;
 ENUM_POSITION_TYPE positionType = POSITION_TYPE_BUY;
 double entryPrice = EMPTY_VALUE, tpPrice = EMPTY_VALUE, slPrice = EMPTY_VALUE;
 double lastPrice = EMPTY_VALUE;
+bool lastIsBullish = true;
+int lastNavigatedBar = INT_MIN;
+
+//+------------------------------------------------------------------+
+//|                 ENSURE BUFFERS ARE PROPERLY SIZED                |
+//+------------------------------------------------------------------+
+bool ensureBufferSize(const int size)
+  {
+//---
+   if(size <= 0)
+     {
+      Print("ensureBufferSize: invalid size requested (", size, ")");
+      return false;
+     }
+   if(ArraySize(openBuffer) >= size && ArraySize(highBuffer) >= size &&
+      ArraySize(lowBuffer) >= size && ArraySize(closeBuffer) >= size &&
+      ArraySize(colorBuffer) >= size)
+      return true;
+
+   if(ArrayResize(openBuffer, size) < 0 || ArrayResize(highBuffer, size) < 0 ||
+      ArrayResize(lowBuffer, size) < 0 || ArrayResize(closeBuffer, size) < 0 ||
+      ArrayResize(colorBuffer, size) < 0)
+     {
+      Print("ensureBufferSize: ArrayResize failed. Error: ", GetLastError());
+      return false;
+     }
+   return true;
+  }
+//+------------------------------------------------------------------+
+//|             VALIDATE SYMBOL AND TIMEFRAME BEFORE REPLAY          |
+//+------------------------------------------------------------------+
+bool isValidSymbolTimeframe(void)
+  {
+//---
+   if(_Symbol == "" || !SymbolSelect(_Symbol, true))
+     {
+      Print("Invalid or unavailable symbol: ", _Symbol);
+      return false;
+     }
+   if(iBars(_Symbol, PERIOD_CURRENT) <= 0)
+     {
+      Print("Invalid timeframe/history for ", _Symbol, ". Error: ", GetLastError());
+      return false;
+     }
+   return true;
+  }
+//+------------------------------------------------------------------+
+//|                  VALIDATE REPLAY ANCHOR BAR RANGE                |
+//+------------------------------------------------------------------+
+bool isValidAnchor(const datetime anchorTime, int &anchorBar)
+  {
+//---
+   anchorBar = iBarShift(_Symbol, PERIOD_CURRENT, anchorTime);
+   int totalBars = iBars(_Symbol, PERIOD_CURRENT);
+   if(anchorBar < 0 || totalBars <= 0 || anchorBar >= totalBars)
+     {
+      Print("Invalid replay anchor position. anchorBar=", anchorBar, " totalBars=", totalBars);
+      return false;
+     }
+   return true;
+  }
 
 //+------------------------------------------------------------------+
 //|                     CUSTOMIZE CHART                              |
@@ -107,10 +172,10 @@ void st_ChartInfo::restore(void)
 //+------------------------------------------------------------------+
 //|                      OBTAIN PRICE COLOR                          |
 //+------------------------------------------------------------------+
-color st_ChartInfo::getPriceColor(void)
+color st_ChartInfo::getPriceColor(const bool isBullish)
   {
-//---
-   return bidClr;
+//--- RETURN A DIFFERENT COLOR FOR BULLISH VS BEARISH CANDLES
+   return isBullish ? bullClr : bearClr;
   }
 
 //+------------------------------------------------------------------+
@@ -150,12 +215,27 @@ void createButton(const string objName, const int xDistance, const int yDistance
    if(ObjectFind(0, objName) != -1)
       ObjectDelete(0, objName);
 
-   ObjectCreate(0, objName, OBJ_BUTTON, 0, 0, 0);
+   if(!ObjectCreate(0, objName, OBJ_BUTTON, 0, 0, 0))
+     {
+      Print("Failed to create button '", objName, "'. Error: ", GetLastError());
+      return;
+     }
    ObjectSetInteger(0, objName, OBJPROP_CORNER, corner);
    ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, xDistance);
    ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, yDistance);
    ObjectSetInteger(0, objName, OBJPROP_XSIZE, xSize);
    ObjectSetInteger(0, objName, OBJPROP_YSIZE, ySize);
+   ObjectSetString(0, objName, OBJPROP_TEXT, display);
+   ObjectSetString(0, objName, OBJPROP_TOOLTIP, tooltip);
+   ObjectSetString(0, objName, OBJPROP_FONT, font);
+   ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, fontsize);
+   ObjectSetInteger(0, objName, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, bgClr);
+   ObjectSetInteger(0, objName, OBJPROP_BORDER_COLOR, bdClr);
+   ObjectSetInteger(0, objName, OBJPROP_STATE, false);
+   ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, objName, OBJPROP_BACK, false);
    ChartRedraw();
   }
 //+------------------------------------------------------------------+
@@ -164,12 +244,24 @@ void createButton(const string objName, const int xDistance, const int yDistance
 void createDashboard(void)
   {
 //---
+   if(ObjectFind(0, _REPLAY_DASHBOARD) != -1)
+      ObjectDelete(0, _REPLAY_DASHBOARD);
+
    if(ObjectCreate(0, _REPLAY_DASHBOARD, OBJ_RECTANGLE_LABEL, 0, 0, 0))
      {
+      ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_CORNER, CORNER_LEFT_LOWER);
       ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_XDISTANCE, 70);
       ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_YDISTANCE, 50);
       ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_XSIZE, 110);
       ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_YSIZE, 40);
+      ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_BGCOLOR, clrDimGray);
+      ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_COLOR, clrBlack);
+      ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+      ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_STYLE, STYLE_SOLID);
+      ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_BACK, false);
+      ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_HIDDEN, true);
       //--- CREATE PLAYBACK, BUY, AND SELL BUTTONS
       createButton(_REPLAY_PLAY_BUTTON, 75, 45, 30, 30, CORNER_LEFT_LOWER,
                    clrWhite, clrDimGray, clrBlack, 20, "Playback Control", _PLAY_SYMBOL, "Segoe UI");
@@ -179,6 +271,8 @@ void createDashboard(void)
                    clrWhite, clrRed, clrBlack, 8, "SELL", "SELL", "Bold");
       ChartRedraw();
      }
+   else
+      Print("Failed to create dashboard. Error: ", GetLastError());
   }
 //+------------------------------------------------------------------+
 //|                   HORIZONTAL LINE CREATION                       |
@@ -195,10 +289,15 @@ void createHLine(const string objName, const double price1, const color clr,
      {
       ObjectSetInteger(0, objName, OBJPROP_COLOR, clr);
       ObjectSetInteger(0, objName, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, objName, OBJPROP_STYLE, style);
       ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
       ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, true);
+      ObjectSetInteger(0, objName, OBJPROP_SELECTED, selected);
+      ObjectSetString(0, objName, OBJPROP_TOOLTIP, toolTip);
       ChartRedraw();
      }
+   else
+      Print("Failed to create horizontal line '", objName, "'. Error: ", GetLastError());
   }
 //+------------------------------------------------------------------+
 //|                      ANCHOR LINE CREATION                        |
@@ -216,8 +315,11 @@ void drawAnchorLine(const string objName, const datetime vTime,
       ObjectSetInteger(0, objName, OBJPROP_WIDTH, 1);
       ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
       ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, true);
+      ObjectSetString(0, objName, OBJPROP_TOOLTIP, tooltip);
       ChartRedraw();
      }
+   else
+      Print("Failed to create anchor line '", objName, "'. Error: ", GetLastError());
   }
 //+------------------------------------------------------------------+
 //|                  IMAGINARY REPLAY PAPER TRADE                    |
@@ -225,11 +327,16 @@ void drawAnchorLine(const string objName, const datetime vTime,
 void showPosition(const double entry, const bool isBuy)
   {
 //---
+   if(entry == EMPTY_VALUE || entry <= 0)
+     {
+      Print("showPosition: invalid entry price (", entry, ")");
+      return;
+     }
    if(isBuy)
      {
       entryPrice = entry;
-      slPrice = entry - (10000 * _Point);
-      tpPrice = entry + (10000 * _Point);
+      slPrice = entry - (InpSLDistancePoints * _Point);
+      tpPrice = entry + (InpTPDistancePoints * _Point);
       createHLine(_REPLAY_POSITION_ENTRY, entryPrice, clrBlue,
                   "Replay Entry Price", false, STYLE_DOT);
       createHLine(_REPLAY_POSITION_SL, slPrice, clrRed,
@@ -241,8 +348,8 @@ void showPosition(const double entry, const bool isBuy)
    else
      {
       entryPrice = entry;
-      slPrice = entry + (10000 * _Point);
-      tpPrice = entry - (10000 * _Point);
+      slPrice = entry + (InpSLDistancePoints * _Point);
+      tpPrice = entry - (InpTPDistancePoints * _Point);
       createHLine(_REPLAY_POSITION_ENTRY, entryPrice, clrBlue,
                   "Replay Entry Price", false, STYLE_DOT);
       createHLine(_REPLAY_POSITION_SL, slPrice, clrRed,
@@ -280,6 +387,11 @@ void toggleMenuButton(void)
      }
    else
      {
+      if(!isValidSymbolTimeframe())
+        {
+         isMenuOn = false;
+         return;
+        }
       ObjectSetInteger(0, _MENU_BUTTON, OBJPROP_BGCOLOR, clrRed);
       ObjectSetString(0, _MENU_BUTTON, OBJPROP_TEXT, "OFF");
       ObjectSetInteger(0, _MENU_BUTTON, OBJPROP_STATE, false);
@@ -288,6 +400,16 @@ void toggleMenuButton(void)
       ChartSetInteger(0, CHART_SHOW_ONE_CLICK, false);
       ChartSetInteger(0, CHART_SHOW_OBJECT_DESCR, true);
       vlineTime = getViewportMiddleTime();
+      int anchorBar = -1;
+      if(vlineTime <= 0 || !isValidAnchor(vlineTime, anchorBar))
+        {
+         Print("toggleMenuButton: unable to determine a valid replay anchor. Aborting.");
+         isMenuOn = false;
+         ChartSetInteger(0, CHART_EVENT_OBJECT_DELETE, false);
+         ChartSetInteger(0, CHART_SHOW_ONE_CLICK, true);
+         ChartSetInteger(0, CHART_SHOW_OBJECT_DESCR, false);
+         return;
+        }
       drawAnchorLine(_REPLAY_ANCHORLINE, vlineTime, "Replay Anchor");
       createDashboard();
       customCandles(true, iTime(_Symbol, PERIOD_CURRENT, 0));
@@ -304,19 +426,32 @@ void toggleMenuButton(void)
 void togglePlayButton(void)
   {
 //---
+   if(ObjectFind(0, _REPLAY_PLAY_BUTTON) == -1)
+     {
+      Print("togglePlayButton: play button object not found.");
+      return;
+     }
    isPlay = !isPlay;
    if(!isPlay)
      {
       ObjectSetString(0, _REPLAY_PLAY_BUTTON, OBJPROP_TEXT, _PLAY_SYMBOL);
       ObjectSetInteger(0, _REPLAY_PLAY_BUTTON, OBJPROP_STATE, false);
-      ObjectSetInteger(0, _REPLAY_ANCHORLINE, OBJPROP_SELECTED, true);
+      if(ObjectFind(0, _REPLAY_ANCHORLINE) != -1)
+         ObjectSetInteger(0, _REPLAY_ANCHORLINE, OBJPROP_SELECTED, true);
       replayMode = false;
      }
    else
      {
+      if(!isValidSymbolTimeframe())
+        {
+         Print("togglePlayButton: cannot start replay, invalid symbol/timeframe.");
+         isPlay = false;
+         return;
+        }
       ObjectSetString(0, _REPLAY_PLAY_BUTTON, OBJPROP_TEXT, _PAUSE_SYMBOL);
       ObjectSetInteger(0, _REPLAY_PLAY_BUTTON, OBJPROP_STATE, false);
-      ObjectSetInteger(0, _REPLAY_ANCHORLINE, OBJPROP_SELECTED, false);
+      if(ObjectFind(0, _REPLAY_ANCHORLINE) != -1)
+         ObjectSetInteger(0, _REPLAY_ANCHORLINE, OBJPROP_SELECTED, false);
       if(ObjectFind(0, _REPLAY_POSITION_ENTRY) != -1)
         {
          //--- DESELECT TP AND SL LEVEL
@@ -336,33 +471,57 @@ void customCandles(const bool isRemove, const datetime anchorTime)
 //---
    static datetime time = 0;
    bars = iBars(_Symbol, PERIOD_CURRENT);
-   stopBar = iBarShift(_Symbol, PERIOD_CURRENT, anchorTime);
-   if(CopyRates(_Symbol, PERIOD_CURRENT, 0, bars, myRates) > 0)
+   if(bars <= 0)
      {
-      for(int w = 0; w < (lastCalculated = ArraySize(myRates) - (stopBar)) && !IsStopped(); w++)
-        {
-         openBuffer[w] = EMPTY_VALUE;
-         highBuffer[w] = EMPTY_VALUE;
-         lowBuffer[w] = EMPTY_VALUE;
-         closeBuffer[w] = EMPTY_VALUE;
-         colorBuffer[w] = 3;
+      Print("customCandles: unable to retrieve bar count. Error: ", GetLastError());
+      return;
+     }
+   stopBar = iBarShift(_Symbol, PERIOD_CURRENT, anchorTime);
+   if(stopBar < 0)
+     {
+      Print("customCandles: invalid anchor time, iBarShift failed. Error: ", GetLastError());
+      return;
+     }
+   if(!ensureBufferSize(bars))
+      return;
 
-         if(!isRemove)
-           {
-            openBuffer[w] = myRates[w].open;
-            highBuffer[w] = myRates[w].high;
-            lowBuffer[w] = myRates[w].low;
-            closeBuffer[w] = myRates[w].close;
-            colorBuffer[w] = (closeBuffer[w] > openBuffer[w]) ? 0 : 1;
-            lastPrice = closeBuffer[w];
-           }
-        }
+   int copied = CopyRates(_Symbol, PERIOD_CURRENT, 0, bars, myRates);
+   if(copied <= 0)
+     {
+      Print("customCandles: CopyRates failed. Error: ", GetLastError());
+      return;
+     }
+
+   lastCalculated = ArraySize(myRates) - stopBar;
+   if(lastCalculated > copied)
+      lastCalculated = copied;
+   if(lastCalculated > bars)
+      lastCalculated = bars;
+
+   for(int w = 0; w < lastCalculated && !IsStopped(); w++)
+     {
+      openBuffer[w] = EMPTY_VALUE;
+      highBuffer[w] = EMPTY_VALUE;
+      lowBuffer[w] = EMPTY_VALUE;
+      closeBuffer[w] = EMPTY_VALUE;
+      colorBuffer[w] = 3;
+
       if(!isRemove)
         {
-         //--- CREATE REPLAY PRICE LINE
-         createHLine(_REPLAY_PRICE, 0, chartState.getPriceColor(), "Replay Price", false);
-         ChartRedraw();
+         openBuffer[w] = myRates[w].open;
+         highBuffer[w] = myRates[w].high;
+         lowBuffer[w] = myRates[w].low;
+         closeBuffer[w] = myRates[w].close;
+         lastIsBullish = closeBuffer[w] > openBuffer[w];
+         colorBuffer[w] = lastIsBullish ? 0 : 1;
+         lastPrice = closeBuffer[w];
         }
+     }
+   if(!isRemove)
+     {
+      //--- CREATE REPLAY PRICE LINE
+      createHLine(_REPLAY_PRICE, 0, chartState.getPriceColor(lastIsBullish), "Replay Price", false);
+      ChartRedraw();
      }
   }
 //+------------------------------------------------------------------+
@@ -371,16 +530,35 @@ void customCandles(const bool isRemove, const datetime anchorTime)
 void revealOneCandle(const int prevCalculated)
   {
 //---
-   if(CopyRates(_Symbol, PERIOD_CURRENT, 0, bars, myRates) > 0)
+   if(prevCalculated < 0)
+     {
+      Print("revealOneCandle: invalid bar index (", prevCalculated, ")");
+      return;
+     }
+   if(!ensureBufferSize(prevCalculated + 1))
+      return;
+
+   int copied = CopyRates(_Symbol, PERIOD_CURRENT, 0, bars, myRates);
+   if(copied <= 0)
+     {
+      Print("revealOneCandle: CopyRates failed. Error: ", GetLastError());
+      return;
+     }
+   if(prevCalculated >= copied)
+     {
+      Print("revealOneCandle: bar index (", prevCalculated, ") out of range of copied rates (", copied, ")");
+      return;
+     }
      {
       openBuffer[prevCalculated] = myRates[prevCalculated].open;
       highBuffer[prevCalculated] = myRates[prevCalculated].high;
       lowBuffer[prevCalculated] = myRates[prevCalculated].low;
       closeBuffer[prevCalculated] = myRates[prevCalculated].close;
-      colorBuffer[prevCalculated] = (closeBuffer[prevCalculated] > openBuffer[prevCalculated]) ? 0 : 1;
+      lastIsBullish = closeBuffer[prevCalculated] > openBuffer[prevCalculated];
+      colorBuffer[prevCalculated] = lastIsBullish ? 0 : 1;
       lastPrice = closeBuffer[prevCalculated];
       //--- MONITOR REPLAY TRADE SL AND TP HIT
-      if(isPositionOpen)
+      if(isPositionOpen && ObjectFind(0, _REPLAY_POSITION_ENTRY) != -1)
         {
          switch(positionType)
            {
@@ -406,12 +584,25 @@ void revealOneCandle(const int prevCalculated)
                break;
            }
         }
-      //--- ENSURE REPLAY BAR IS IN VIEW
+      //--- ENSURE REPLAY BAR IS IN VIEW (ONLY NAVIGATE WHEN NECESSARY TO AVOID LAG)
       int replayBar = iBarShift(_Symbol, PERIOD_CURRENT, myRates[prevCalculated].time);
-      int visible = (int)ChartGetInteger(0, CHART_VISIBLE_BARS);
-      ChartNavigate(0, CHART_END, -(replayBar - (visible / 4)));
+      if(replayBar >= 0 && replayBar != lastNavigatedBar)
+        {
+         int visible = (int)ChartGetInteger(0, CHART_VISIBLE_BARS);
+         int first = (int)ChartGetInteger(0, CHART_FIRST_VISIBLE_BAR);
+         //--- ONLY NAVIGATE WHEN THE REPLAY BAR IS ABOUT TO LEAVE THE VISIBLE WINDOW
+         if(replayBar > first || replayBar < first - visible + 1)
+           {
+            ChartNavigate(0, CHART_END, -(replayBar - (visible / 4)));
+            lastNavigatedBar = replayBar;
+           }
+        }
       //--- UPDATE REPLAY PRICE
-      ObjectMove(0, _REPLAY_PRICE, 0, 0, closeBuffer[prevCalculated]);
+      if(ObjectFind(0, _REPLAY_PRICE) != -1)
+        {
+         ObjectMove(0, _REPLAY_PRICE, 0, 0, closeBuffer[prevCalculated]);
+         ObjectSetInteger(0, _REPLAY_PRICE, OBJPROP_COLOR, chartState.getPriceColor(lastIsBullish));
+        }
       ChartRedraw();
      }
   }
@@ -421,7 +612,13 @@ void revealOneCandle(const int prevCalculated)
 //+------------------------------------------------------------------+
 int OnInit()
   {
-//---
+//--- VALIDATE SYMBOL/TIMEFRAME BEFORE ANY SETUP
+   if(!isValidSymbolTimeframe())
+     {
+      Print("OnInit: invalid symbol/timeframe (", _Symbol, "). Indicator initialization failed.");
+      return(INIT_FAILED);
+     }
+
    createButton(_MENU_BUTTON, 10, 50, 40, 40, CORNER_LEFT_LOWER,
                 clrWhite, clrBlue, clrBlack, 10, "Menu Button", "ON");
 //--- SET INDICATOR BUFFERS
@@ -431,11 +628,26 @@ int OnInit()
    SetIndexBuffer(3, closeBuffer, INDICATOR_DATA);
    SetIndexBuffer(4, colorBuffer, INDICATOR_COLOR_INDEX);
 
+//--- PROPERLY SIZE BUFFERS BASED ON AVAILABLE HISTORY
+   int totalBars = iBars(_Symbol, PERIOD_CURRENT);
+   if(totalBars <= 0)
+     {
+      Print("OnInit: unable to determine bar count. Error: ", GetLastError());
+      return(INIT_FAILED);
+     }
+   if(!ensureBufferSize(totalBars))
+     {
+      Print("OnInit: failed to allocate indicator buffers.");
+      return(INIT_FAILED);
+     }
+
    ArrayInitialize(openBuffer, EMPTY_VALUE);
    ArrayInitialize(highBuffer, EMPTY_VALUE);
    ArrayInitialize(lowBuffer, EMPTY_VALUE);
    ArrayInitialize(closeBuffer, EMPTY_VALUE);
+   ArrayInitialize(colorBuffer, 3);
 
+   bars = totalBars;
    IndicatorSetInteger(INDICATOR_DIGITS, _Digits);
    EventSetTimer(2);// TWO SECONDS TIMER
    return(INIT_SUCCEEDED);
@@ -503,6 +715,11 @@ void OnChartEvent(const int32_t id,
          if(sparam == _REPLAY_BUY_BUTTON)
            {
             ObjectSetInteger(0, _REPLAY_BUY_BUTTON, OBJPROP_STATE, false);
+            if(lastPrice == EMPTY_VALUE || lastPrice <= 0)
+              {
+               Print("Cannot open replay buy position: no valid last price yet.");
+               break;
+              }
             //--- OPEN REPLAY BUY POSITION
             showPosition(lastPrice, true);
             PlaySound("ok.wav");
@@ -514,6 +731,11 @@ void OnChartEvent(const int32_t id,
          if(sparam == _REPLAY_SELL_BUTTON)
            {
             ObjectSetInteger(0, _REPLAY_SELL_BUTTON, OBJPROP_STATE, false);
+            if(lastPrice == EMPTY_VALUE || lastPrice <= 0)
+              {
+               Print("Cannot open replay sell position: no valid last price yet.");
+               break;
+              }
             //--- OPEN REPLAY SELL POSITION
             showPosition(lastPrice, false);
             PlaySound("ok.wav");
@@ -522,7 +744,8 @@ void OnChartEvent(const int32_t id,
             break;
            }
          //--- DISABLE ANCHOR DESELECTION WHEN IN PLAY MODE
-         if(!ObjectGetInteger(0, _REPLAY_ANCHORLINE, OBJPROP_SELECTED))
+         if(ObjectFind(0, _REPLAY_ANCHORLINE) != -1 && ObjectFind(0, _REPLAY_PLAY_BUTTON) != -1 &&
+            !ObjectGetInteger(0, _REPLAY_ANCHORLINE, OBJPROP_SELECTED))
            {
             if(ObjectGetString(0, _REPLAY_PLAY_BUTTON, OBJPROP_TEXT) == _PLAY_SYMBOL)
                ObjectSetInteger(0, _REPLAY_ANCHORLINE, OBJPROP_SELECTED, true);
@@ -533,12 +756,21 @@ void OnChartEvent(const int32_t id,
       case CHARTEVENT_OBJECT_DRAG:
          if(sparam == _REPLAY_ANCHORLINE)
            {
+            datetime draggedTime = (datetime)ObjectGetInteger(0, _REPLAY_ANCHORLINE, OBJPROP_TIME);
+            draggedTime = (draggedTime > iTime(_Symbol, PERIOD_CURRENT, 1))
+                          ? iTime(_Symbol, PERIOD_CURRENT, 1) : draggedTime;
+            int anchorBar = -1;
+            if(!isValidAnchor(draggedTime, anchorBar))
+              {
+               Print("Replay anchor dragged to an invalid position. Reverting.");
+               ObjectSetInteger(0, _REPLAY_ANCHORLINE, OBJPROP_TIME, vlineTime);
+               ChartRedraw();
+               break;
+              }
             //--- CLEAR CHART
             ObjectsDeleteAll(0, _PROG_NAME + "REPLAY_POSITION");
             customCandles(true, iTime(_Symbol, PERIOD_CURRENT, 0));
-            vlineTime = (datetime)ObjectGetInteger(0, _REPLAY_ANCHORLINE, OBJPROP_TIME);
-            vlineTime = (vlineTime > iTime(_Symbol, PERIOD_CURRENT, 1))
-                        ? iTime(_Symbol, PERIOD_CURRENT, 1) : vlineTime;
+            vlineTime = draggedTime;
             ObjectSetInteger(0, _REPLAY_ANCHORLINE, OBJPROP_TIME, vlineTime);
             //--- SHOW CUSTOM REPLAY CANDLES
             customCandles(false, vlineTime);
@@ -550,16 +782,18 @@ void OnChartEvent(const int32_t id,
          //--- ENSURE REPLAY POSITION SL LEVEL IS PLACED CORRECTLY
          if(sparam == _REPLAY_POSITION_SL)
            {
+            if(ObjectFind(0, _REPLAY_POSITION_SL) == -1)
+               break;
             if(positionType == POSITION_TYPE_BUY)
               {
                if(ObjectGetDouble(0, _REPLAY_POSITION_SL, OBJPROP_PRICE) >= entryPrice)
-                  ObjectMove(0, _REPLAY_POSITION_SL, 0, 0, entryPrice - (10000 * _Point));
+                  ObjectMove(0, _REPLAY_POSITION_SL, 0, 0, entryPrice - (InpSLDistancePoints * _Point));
                ChartRedraw();
               }
             else
               {
                if(ObjectGetDouble(0, _REPLAY_POSITION_SL, OBJPROP_PRICE) <= entryPrice)
-                  ObjectMove(0, _REPLAY_POSITION_SL, 0, 0, entryPrice + (10000 * _Point));
+                  ObjectMove(0, _REPLAY_POSITION_SL, 0, 0, entryPrice + (InpSLDistancePoints * _Point));
                ChartRedraw();
               }
             slPrice = ObjectGetDouble(0, _REPLAY_POSITION_SL, OBJPROP_PRICE);
@@ -568,16 +802,18 @@ void OnChartEvent(const int32_t id,
          //--- ENSURE REPLAY POSITION TP LEVEL IS PLACED CORRECTLY
          if(sparam == _REPLAY_POSITION_TP)
            {
+            if(ObjectFind(0, _REPLAY_POSITION_TP) == -1)
+               break;
             if(positionType == POSITION_TYPE_BUY)
               {
                if(ObjectGetDouble(0, _REPLAY_POSITION_TP, OBJPROP_PRICE) <= entryPrice)
-                  ObjectMove(0, _REPLAY_POSITION_TP, 0, 0, entryPrice + (10000 * _Point));
+                  ObjectMove(0, _REPLAY_POSITION_TP, 0, 0, entryPrice + (InpTPDistancePoints * _Point));
                ChartRedraw();
               }
             else
               {
                if(ObjectGetDouble(0, _REPLAY_POSITION_TP, OBJPROP_PRICE) >= entryPrice)
-                  ObjectMove(0, _REPLAY_POSITION_TP, 0, 0, entryPrice - (10000 * _Point));
+                  ObjectMove(0, _REPLAY_POSITION_TP, 0, 0, entryPrice - (InpTPDistancePoints * _Point));
                ChartRedraw();
               }
             tpPrice = ObjectGetDouble(0, _REPLAY_POSITION_TP, OBJPROP_PRICE);
@@ -585,7 +821,7 @@ void OnChartEvent(const int32_t id,
          break;
       //--- OBJECT DELETION RESTORATION
       case CHARTEVENT_OBJECT_DELETE:
-         if(sparam == _REPLAY_ANCHORLINE)
+         if(sparam == _REPLAY_ANCHORLINE && vlineTime > 0)
            {
             Print("Replay Anchor line deleted. RESTORED");
             drawAnchorLine(_REPLAY_ANCHORLINE, vlineTime, "Replay Anchor");
@@ -604,8 +840,14 @@ void OnTimer(void)
    if(replayMode)
      {
       bars = iBars(_Symbol, PERIOD_CURRENT);
+      if(bars <= 0)
+        {
+         Print("OnTimer: unable to retrieve bar count. Error: ", GetLastError());
+         replayMode = false;
+         return;
+        }
       //--- SAFETY BOUNDARY
-      if(lastCalculated >= bars - 1)
+      if(lastCalculated < 0 || lastCalculated >= bars - 1)
         {
          replayMode = false;
          return;
