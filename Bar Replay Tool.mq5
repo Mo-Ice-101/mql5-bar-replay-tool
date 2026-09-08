@@ -206,7 +206,7 @@ datetime getViewportMiddleTime(void)
 //+------------------------------------------------------------------+
 //|                      BUTTON CREATION                             |
 //+------------------------------------------------------------------+
-void createButton(const string objName, const int xDistance, const int yDistance,
+bool createButton(const string objName, const int xDistance, const int yDistance,
                   const int xSize, const int ySize, const ENUM_BASE_CORNER corner,
                   const color clr, const color bgClr, const color bdClr, const int fontsize,
                   const string tooltip, const string display, const string font = "Arial")
@@ -215,10 +215,11 @@ void createButton(const string objName, const int xDistance, const int yDistance
    if(ObjectFind(0, objName) != -1)
       ObjectDelete(0, objName);
 
+   ResetLastError();
    if(!ObjectCreate(0, objName, OBJ_BUTTON, 0, 0, 0))
      {
       Print("Failed to create button '", objName, "'. Error: ", GetLastError());
-      return;
+      return false;
      }
    ObjectSetInteger(0, objName, OBJPROP_CORNER, corner);
    ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, xDistance);
@@ -237,6 +238,35 @@ void createButton(const string objName, const int xDistance, const int yDistance
    ObjectSetInteger(0, objName, OBJPROP_HIDDEN, false);
    ObjectSetInteger(0, objName, OBJPROP_BACK, false);
    ChartRedraw();
+
+//--- VERIFY THAT THE OBJECT REALLY EXISTS ON THE CHART
+   if(ObjectFind(0, objName) < 0)
+     {
+      Print("Button '", objName, "' was created but is not present on the chart. Error: ", GetLastError());
+      return false;
+     }
+   Print("Button '", objName, "' created successfully at (", xDistance, ",", yDistance, ").");
+   return true;
+  }
+//+------------------------------------------------------------------+
+//|            BUTTON CREATION WITH RETRY (RELIABILITY)              |
+//+------------------------------------------------------------------+
+bool createButtonWithRetry(const string objName, const int xDistance, const int yDistance,
+                           const int xSize, const int ySize, const ENUM_BASE_CORNER corner,
+                           const color clr, const color bgClr, const color bdClr, const int fontsize,
+                           const string tooltip, const string display, const string font = "Arial",
+                           const int attempts = 3)
+  {
+//---
+   for(int i = 1; i <= attempts; i++)
+     {
+      if(createButton(objName, xDistance, yDistance, xSize, ySize, corner,
+                      clr, bgClr, bdClr, fontsize, tooltip, display, font))
+         return true;
+      Print("createButtonWithRetry: attempt ", i, " of ", attempts,
+            " failed for '", objName, "'.");
+     }
+   return false;
   }
 //+------------------------------------------------------------------+
 //|                                                                  |
@@ -263,12 +293,12 @@ void createDashboard(void)
       ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_SELECTABLE, false);
       ObjectSetInteger(0, _REPLAY_DASHBOARD, OBJPROP_HIDDEN, false);
       //--- CREATE PLAYBACK, BUY, AND SELL BUTTONS
-      createButton(_REPLAY_PLAY_BUTTON, 75, 45, 30, 30, CORNER_LEFT_LOWER,
-                   clrWhite, clrDimGray, clrBlack, 20, "Playback Control", _PLAY_SYMBOL, "Segoe UI");
-      createButton(_REPLAY_BUY_BUTTON, 110, 45, 30, 30, CORNER_LEFT_LOWER,
-                   clrWhite, clrBlue, clrBlack, 8, "BUY", "BUY", "Bold");
-      createButton(_REPLAY_SELL_BUTTON, 145, 45, 30, 30, CORNER_LEFT_LOWER,
-                   clrWhite, clrRed, clrBlack, 8, "SELL", "SELL", "Bold");
+      createButtonWithRetry(_REPLAY_PLAY_BUTTON, 75, 45, 30, 30, CORNER_LEFT_LOWER,
+                            clrWhite, clrDimGray, clrBlack, 20, "Playback Control", _PLAY_SYMBOL, "Segoe UI");
+      createButtonWithRetry(_REPLAY_BUY_BUTTON, 110, 45, 30, 30, CORNER_LEFT_LOWER,
+                            clrWhite, clrBlue, clrBlack, 8, "BUY", "BUY", "Bold");
+      createButtonWithRetry(_REPLAY_SELL_BUTTON, 145, 45, 30, 30, CORNER_LEFT_LOWER,
+                            clrWhite, clrRed, clrBlack, 8, "SELL", "SELL", "Bold");
       ChartRedraw();
      }
    else
@@ -619,8 +649,8 @@ int OnInit()
       return(INIT_FAILED);
      }
 
-   createButton(_MENU_BUTTON, 10, 50, 40, 40, CORNER_LEFT_LOWER,
-                clrWhite, clrBlue, clrBlack, 10, "Menu Button", "ON");
+   bool menuButtonCreated = createButtonWithRetry(_MENU_BUTTON, 10, 50, 40, 40, CORNER_LEFT_LOWER,
+                            clrWhite, clrBlue, clrBlack, 10, "Menu Button", "ON");
 //--- SET INDICATOR BUFFERS
    SetIndexBuffer(0, openBuffer, INDICATOR_DATA);
    SetIndexBuffer(1, highBuffer, INDICATOR_DATA);
@@ -650,6 +680,20 @@ int OnInit()
    bars = totalBars;
    IndicatorSetInteger(INDICATOR_DIGITS, _Digits);
    EventSetTimer(2);// TWO SECONDS TIMER
+
+//--- FINAL VALIDATION: THE MENU BUTTON MUST BE VISIBLE ON THE CHART
+   if(!menuButtonCreated || ObjectFind(0, _MENU_BUTTON) < 0)
+     {
+      string msg = _PROG_NAME + ": menu button could not be created on this chart. " +
+                   "Check the Experts/Journal tab for details.";
+      Print("OnInit: ", msg, " Error: ", GetLastError());
+      Comment(msg);
+      Alert(msg);
+     }
+   else
+      Comment("");
+
+   ChartRedraw();
    return(INIT_SUCCEEDED);
   }
 
@@ -665,6 +709,7 @@ void OnDeinit(const int32_t reason)
    ChartSetInteger(0, CHART_SHOW_OBJECT_DESCR, false);
    ObjectsDeleteAll(0, _PROG_NAME);
    chartState.restore();
+   Comment("");
    ChartRedraw();
   }
 
