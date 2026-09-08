@@ -649,7 +649,7 @@ int OnInit()
       return(INIT_FAILED);
      }
 
-   bool menuButtonCreated = createButtonWithRetry(_MENU_BUTTON, 10, 50, 40, 40, CORNER_LEFT_LOWER,
+   bool menuButtonCreated = createButtonWithRetry(_MENU_BUTTON, 450, 175, 40, 40, CORNER_LEFT_LOWER,
                             clrWhite, clrBlue, clrBlack, 10, "Menu Button", "ON");
 //--- SET INDICATOR BUFFERS
    SetIndexBuffer(0, openBuffer, INDICATOR_DATA);
